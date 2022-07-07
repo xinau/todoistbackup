@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"log"
+	"os"
 	"sync"
 
 	"github.com/xinau/todoistbackup/internal/client"
@@ -35,6 +36,39 @@ func (m *manager) download(ctx context.Context, backup *client.Backup) {
 	log.Printf("info: written backup %q to storage", backup.Version)
 }
 
+func (m *manager) run(ctx context.Context) {
+	backups, _, err := m.client.ListBackups(ctx)
+	if err != nil {
+		log.Fatalf("fatal: listing todoist backups: %s", err)
+	}
+	log.Printf("info: found %d potentially new backups", len(backups))
+
+	existing, err := m.store.ListVersions(ctx)
+	if err != nil {
+		log.Fatalf("fatal: listing backups in storage: %s", err)
+	}
+
+	log.Printf("info: starting download of missing backups")
+	for _, backup := range backups {
+		if _, ok := existing[backup.Version]; ok {
+			continue
+		}
+
+		m.wg.Add(1)
+		go func(backup *client.Backup) {
+			defer m.wg.Done()
+			m.download(ctx, backup)
+		}(backup)
+	}
+	m.wg.Wait()
+
+	versions, err := m.store.ListVersions(ctx)
+	if err != nil {
+		log.Fatal("fatal: listing backups in storage")
+	}
+	log.Printf("info: added %d new backups to storage", len(versions)-len(existing))
+}
+
 func main() {
 	ctx := context.Background()
 	flag.Parse()
@@ -56,34 +90,6 @@ func main() {
 		log.Fatalf("fatal: initializing storage: %s", err)
 	}
 
-	backups, _, err := mgr.client.ListBackups(ctx)
-	if err != nil {
-		log.Fatalf("fatal: listing todoist backups: %s", err)
-	}
-	log.Printf("info: found %d potentially new backups", len(backups))
-
-	existing, err := mgr.store.ListVersions(ctx)
-	if err != nil {
-		log.Fatalf("fatal: listing backups in storage: %s", err)
-	}
-
-	log.Printf("info: starting download of missing backups")
-	for _, backup := range backups {
-		if _, ok := existing[backup.Version]; ok {
-			continue
-		}
-
-		mgr.wg.Add(1)
-		go func(backup *client.Backup) {
-			defer mgr.wg.Done()
-			mgr.download(ctx, backup)
-		}(backup)
-	}
-	mgr.wg.Wait()
-
-	versions, err := mgr.store.ListVersions(ctx)
-	if err != nil {
-		log.Fatal("fatal: listing backups in storage")
-	}
-	log.Printf("info: added %d new backups to storage", len(versions)-len(existing))
+	mgr.run(ctx)
+	os.Exit(0)
 }
