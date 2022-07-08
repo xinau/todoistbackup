@@ -11,15 +11,38 @@ import (
 	"github.com/minio/minio-go/v7/pkg/credentials"
 
 	"github.com/xinau/todoistbackup/internal/client"
-	"github.com/xinau/todoistbackup/internal/config"
 )
+
+type Config struct {
+	Bucket   string `json:"bucket"`
+	Endpoint string `json:"endpoint"`
+	Region   string `json:"region"`
+
+	AccessKey string `json:"access_key"`
+	SecretKey string `json:"secret_key"`
+
+	Insecure bool `json:"insecure"`
+}
+
+func (c *Config) Validate() error {
+	if len(c.Bucket) == 0 {
+		return fmt.Errorf("bucket name is empty")
+	}
+	if len(c.Endpoint) == 0 {
+		return fmt.Errorf("endpoint address is empty")
+	}
+	if len(c.AccessKey) == 0 || len(c.SecretKey) == 0 {
+		return fmt.Errorf("access or secret key is empty")
+	}
+	return nil
+}
 
 type Store struct {
 	client *minio.Client
 	bucket string
 }
 
-func NewStore(config *config.StoreConfig) (*Store, error) {
+func NewStore(config *Config) (*Store, error) {
 	client, err := minio.New(config.Endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(config.AccessKey, config.SecretKey, ""),
 		Secure: !config.Insecure,

@@ -9,14 +9,24 @@ import (
 	"net/http"
 	"net/url"
 	"time"
-
-	"github.com/xinau/todoistbackup/internal/config"
 )
 
 var (
 	BaseURL   = "https://api.todoist.com/sync/v8"
 	UserAgent = "todoistbackup github.com/xinau/todoistbackup"
 )
+
+type Config struct {
+	Token   string `json:"token"`
+	Timeout int    `json:"timeout"`
+}
+
+func (c *Config) Validate() error {
+	if len(c.Token) == 0 {
+		return fmt.Errorf("token is empty")
+	}
+	return nil
+}
 
 type Client struct {
 	client *http.Client
@@ -26,7 +36,7 @@ type Client struct {
 	token     string
 }
 
-func NewClient(config *config.ClientConfig) (*Client, error) {
+func NewClient(config *Config) (*Client, error) {
 	url, err := url.Parse(BaseURL)
 	if err != nil {
 		return nil, err
