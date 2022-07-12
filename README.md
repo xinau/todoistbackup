@@ -43,7 +43,9 @@ It provides the following attributes for configuring various aspects of the back
 
 `store.secret-key <string>` - S3 secret key to use.
 
-`store.insecure <bool>` - Set to `true` to allow insecure S3 connections.
+`store.insecure <bool optional>` - Set to `true` to allow insecure S3 connections.
+
+`daemon <bool optional>` - Set to `true` to run backup job every 24 hours.
 
 
 ## BUILD
