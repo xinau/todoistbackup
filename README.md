@@ -39,9 +39,9 @@ It provides the following attributes for configuring various aspects of the back
 
 `store.region <string optional>` - S3 region the bucket will be created in.
 
-`store.access_key <string>` - S3 access key to use.
+`store.access-key <string>` - S3 access key to use.
 
-`store.secret_key <string>` - S3 secret key to use.
+`store.secret-key <string>` - S3 secret key to use.
 
 `store.insecure <bool>` - Set to `true` to allow insecure S3 connections.
 
