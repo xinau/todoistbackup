@@ -8,8 +8,10 @@ import (
 	"log"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/peterbourgon/ff/v3"
+	"go.uber.org/multierr"
 
 	"github.com/xinau/todoistbackup/internal/client"
 	"github.com/xinau/todoistbackup/internal/store"
@@ -21,30 +23,32 @@ type manager struct {
 	wg     sync.WaitGroup
 }
 
-func (m *manager) download(ctx context.Context, backup *client.Backup) {
+func (m *manager) download(ctx context.Context, backup *client.Backup) error {
 	reader, _, err := m.client.DownloadBackup(ctx, backup)
 	if err != nil {
-		log.Fatalf("fatal: downloading backup %q from todoist: %s", backup.Version, err)
+		return fmt.Errorf("downloading backup %q from todoist: %w", backup.Version, err)
 	}
 	defer reader.Close()
 
 	err = m.store.PutBackup(ctx, backup, reader)
 	if err != nil {
-		log.Printf("error: writting backup %q to storage: %s", backup.Version, err)
+		return fmt.Errorf("writting backup %q to storage: %w", backup.Version, err)
 	}
 	log.Printf("info: written backup %q to storage", backup.Version)
+
+	return nil
 }
 
-func (m *manager) run(ctx context.Context) {
+func (m *manager) run(ctx context.Context) error {
 	backups, _, err := m.client.ListBackups(ctx)
 	if err != nil {
-		log.Fatalf("fatal: listing todoist backups: %s", err)
+		return fmt.Errorf("listing todoist backups: %w", err)
 	}
 	log.Printf("info: found %d potentially new backups", len(backups))
 
 	existing, err := m.store.ListVersions(ctx)
 	if err != nil {
-		log.Fatalf("fatal: listing backups in storage: %s", err)
+		return fmt.Errorf("listing backups in storage: %w", err)
 	}
 
 	log.Printf("info: starting download of missing backups")
@@ -56,21 +60,29 @@ func (m *manager) run(ctx context.Context) {
 		m.wg.Add(1)
 		go func(backup *client.Backup) {
 			defer m.wg.Done()
-			m.download(ctx, backup)
+			err = multierr.Append(err, m.download(ctx, backup))
 		}(backup)
 	}
 	m.wg.Wait()
 
+	if err != nil {
+		return fmt.Errorf("downloading backups: %w", err)
+	}
+
 	versions, err := m.store.ListVersions(ctx)
 	if err != nil {
-		log.Fatal("fatal: listing backups in storage")
+		return fmt.Errorf("listing backups in storage")
 	}
 	log.Printf("info: added %d new backups to storage", len(versions)-len(existing))
+
+	return nil
 }
 
 type config struct {
 	client client.Config
 	store  store.Config
+
+	daemon bool
 }
 
 func parse() (*config, error) {
@@ -92,13 +104,16 @@ func parse() (*config, error) {
 	fs.StringVar(&cfg.store.Region, "store.region", "",
 		"todoist store s3 region, also TODOISTBACKUP_STORE_REGION")
 
-	fs.StringVar(&cfg.store.AccessKey, "store.access_key", "",
+	fs.StringVar(&cfg.store.AccessKey, "store.access-key", "",
 		"todoist store s3 access key, also TODOISTBACKUP_STORE_ACCESS_KEY")
-	fs.StringVar(&cfg.store.SecretKey, "store.secret_key", "",
+	fs.StringVar(&cfg.store.SecretKey, "store.secret-key", "",
 		"todoist store s3 secret key, also TODOISTBACKUP_STORE_SECRET_KEY")
 
 	fs.BoolVar(&cfg.store.Insecure, "store.insecure", false,
 		"todoist store s3 connection insecure, also TODOISTBACKUP_STORE_INSECURE (default false)")
+
+	fs.BoolVar(&cfg.daemon, "daemon", false,
+		"run backup job every 24 hours, also TODOISTBACKUP_DAEMON (default false)")
 
 	err := ff.Parse(fs, os.Args[1:],
 		ff.WithEnvVarPrefix("TODOISTBACKUP"),
@@ -121,6 +136,26 @@ func parse() (*config, error) {
 	return &cfg, nil
 }
 
+func periodic(ctx context.Context, interval time.Duration, fn func(context.Context) error) error {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	if err := fn(ctx); err != nil {
+		return err
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			if err := fn(ctx); err != nil {
+				return err
+			}
+		}
+	}
+}
+
 func main() {
 	cfg, err := parse()
 	if errors.Is(err, flag.ErrHelp) {
@@ -141,6 +176,21 @@ func main() {
 	}
 
 	ctx := context.Background()
-	mgr.run(ctx)
+
+	if cfg.daemon {
+		err = periodic(ctx, 24*time.Hour, func(ctx context.Context) error {
+			if err := mgr.run(ctx); err != nil {
+				log.Printf("error: %s", err)
+			}
+			return nil
+		})
+	} else {
+		err = mgr.run(ctx)
+	}
+
+	if err != nil {
+		log.Fatalf("fatal: %s", err)
+	}
+
 	os.Exit(0)
 }
