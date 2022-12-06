@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	BaseURL   = "https://api.todoist.com/sync/v8"
+	BaseURL   = "https://api.todoist.com/sync/v9"
 	UserAgent = "todoistbackup github.com/xinau/todoistbackup"
 )
 
